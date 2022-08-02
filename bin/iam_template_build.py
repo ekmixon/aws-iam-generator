@@ -40,18 +40,11 @@ def policy_document_from_jinja(c, policy_name, model, policy_path, policy_format
                          .get_template(model["policy_file"])
     except Exception as e:
         raise ValueError(
-            "Failed to read template file {}/{}\n\n{}".format(
-                policy_path,
-                model["policy_file"],
-                e
-            )
+            f'Failed to read template file {policy_path}/{model["policy_file"]}\n\n{e}'
         )
 
-    # Perform our jinja substitutions on the file contents.
-    template_vars = ""
-    if "template_vars" in model:
-        template_vars = model["template_vars"]
 
+    template_vars = model["template_vars"] if "template_vars" in model else ""
     try:
         template_jinja = template.render(
             config=c.config,
@@ -61,26 +54,19 @@ def policy_document_from_jinja(c, policy_name, model, policy_path, policy_format
         )
     except Exception as e:
         raise ValueError(
-            "Jinja render failure working on file {}/{}\n\n{}".format(
-                policy_path,
-                model["policy_file"],
-                e
-            )
+            f'Jinja render failure working on file {policy_path}/{model["policy_file"]}\n\n{e}'
         )
+
 
     # Now encode the jinja parsed template as JSON or YAML
     try:
         doc = json.loads(template_jinja) if policy_format == 'json' else yaml.load(template_jinja)
     except Exception as e:
-        print("Contents returned after Jinja parsing:\n{}".format(template_jinja))
+        print(f"Contents returned after Jinja parsing:\n{template_jinja}")
         raise ValueError(
-            "{} encoding failure working on file {}/{}\n\n{}".format(
-                policy_format.upper(),
-                policy_path,
-                model["policy_file"],
-                e
-            )
+            f'{policy_format.upper()} encoding failure working on file {policy_path}/{model["policy_file"]}\n\n{e}'
         )
+
 
     return(doc)
 
@@ -117,22 +103,12 @@ def build_role_trust(c, trusts):
                 + str(c.account_map_ids[trust_account[0]])
                 + ":root"
             )
-        # See if this is a user inside the template
         elif c.is_local_user(trust):
-            aws_principals.append(
-                GetAtt(scrub_name("{}User".format(trust)), "Arn")
-            )
-        # See if this is a group inside the template
+            aws_principals.append(GetAtt(scrub_name(f"{trust}User"), "Arn"))
         elif c.is_local_group(trust):
-            aws_principals.append(
-                GetAtt(scrub_name("{}Group".format(trust)), "Arn")
-            )
-        # See if this is a role inside the template
+            aws_principals.append(GetAtt(scrub_name(f"{trust}Group"), "Arn"))
         elif c.is_local_role(trust):
-            aws_principals.append(
-                GetAtt(scrub_name("{}Role".format(trust)), "Arn")
-            )
-        # Next see if we match our SAML trust.
+            aws_principals.append(GetAtt(scrub_name(f"{trust}Role"), "Arn"))
         elif trust == c.saml_provider:
             saml_principals.append(
                 "arn:aws:iam::"
@@ -140,26 +116,18 @@ def build_role_trust(c, trusts):
                 + ":saml-provider/"
                 + c.saml_provider
             )
-        # See if we match a user, group, or role ARN Principal
         elif re.match("arn:aws:iam::\d{12}:(user|group|role)/.*?", trust) or \
                 re.match("arn:aws:sts::\d{12}:assumed-role/.*?/.*?", trust):
             aws_principals.append(trust)
-        # See if we have a service
         elif re.match("^.*\.amazonaws\.com$", trust):
             service_principals.append(trust)
-        # See if we have a web federation principal
         elif trust in valid_web_principals:
             web_principals.append(trust)
-        # Otherwise raise a value-error
         else:
             raise ValueError(
-                "Trust name '{}' in the config.yaml does not appear to be "
-                "valid.  Confirm it is a valid AWS Principal ARN / AWS "
-                "Service Principal or an Account Name / SAML Provider "
-                "contained in the config.yaml".format(
-                    trust
-                )
+                f"Trust name '{trust}' in the config.yaml does not appear to be valid.  Confirm it is a valid AWS Principal ARN / AWS Service Principal or an Account Name / SAML Provider contained in the config.yaml"
             )
+
 
     if aws_principals:
         policy["Statement"].append({
@@ -212,12 +180,11 @@ def build_assume_role_policy_document(c, accounts, roles):
 
 
 def build_sts_statement(account, role):
-    statement = {
+    return {
         "Effect": "Allow",
         "Action": "sts:AssumeRole",
-        "Resource": "arn:aws:iam::" + account + ":role/" + role,
+        "Resource": f"arn:aws:iam::{account}:role/{role}",
     }
-    return(statement)
 
 
 # Managed policies are unique in that they must be an ARN.
@@ -232,40 +199,28 @@ def parse_managed_policies(c, managed_policies, working_on):
                 managed_policy_list.append(Sub(managed_policy))
             else:
                 managed_policy_list.append(managed_policy)
-        # If we have an import: then we're importing from another template.
         elif re.match("^import:", managed_policy):
             m = re.match("^import:(.*)", managed_policy)
-            managed_policy_list.append(ImportValue(m.group(1)))
-        # Alternately we're dealing with a managed policy locally that
-        # we need to 'Ref' to get an ARN.
-        else:
-            # Confirm this is a local policy, otherwise we'll error out.
-            if c.is_local_managed_policy(managed_policy):
+            managed_policy_list.append(ImportValue(m[1]))
+        elif c.is_local_managed_policy(managed_policy):
                 # Policy name exists in the template,
                 # lets make sure it will exist in this account.
-                if c.is_managed_policy_in_account(
+            if c.is_managed_policy_in_account(
                         managed_policy,
                         c.map_account(c.current_account)
                 ):
-                    # If this is a ref we'll need to assure it's scrubbed
-                    managed_policy_list.append(Ref(scrub_name(managed_policy)))
-                else:
-                    raise ValueError(
-                        "Working on: '{}' - Managed Policy: '{}' "
-                        "is not configured to go into account: '{}'".format(
-                            working_on,
-                            managed_policy,
-                            c.current_account
-                        )
-                    )
+                # If this is a ref we'll need to assure it's scrubbed
+                managed_policy_list.append(Ref(scrub_name(managed_policy)))
             else:
                 raise ValueError(
-                    "Working on: '{}' - Managed Policy: '{}' "
-                    "does not exist in the configuration file".format(
-                        working_on,
-                        managed_policy
-                    )
+                    f"Working on: '{working_on}' - Managed Policy: '{managed_policy}' is not configured to go into account: '{c.current_account}'"
                 )
+
+        else:
+            raise ValueError(
+                f"Working on: '{working_on}' - Managed Policy: '{managed_policy}' does not exist in the configuration file"
+            )
+
 
     return(managed_policy_list)
 
@@ -281,13 +236,9 @@ def parse_imports(c, context, element_list):
         # See if we match an import
         if re.match("^import:", element):
             m = re.match("^import:(.*)", element)
-            return_list.append(ImportValue(m.group(1)))
-        # See if we match a group in the template.  If so we need to Ref()
-        # the group name for named: false to work.
+            return_list.append(ImportValue(m[1]))
         elif c.is_local_group(element) and context == "user":
-            return_list.append(Ref(scrub_name("{}Group".format(element))))
-        # Otherwise we're verbatim as there's no real way to know if this
-        # is within the template or existing.
+            return_list.append(Ref(scrub_name(f"{element}Group")))
         else:
             return_list.append(element)
 
@@ -303,12 +254,13 @@ def add_managed_policy(
         ):
     cfn_name = scrub_name(ManagedPolicyName)
     kw_args = {
-        "Description": "Managed Policy " + ManagedPolicyName,
+        "Description": f"Managed Policy {ManagedPolicyName}",
         "PolicyDocument": PolicyDocument,
         "Groups": [],
         "Roles": [],
-        "Users": []
+        "Users": [],
     }
+
 
     if named:
         kw_args["ManagedPolicyName"] = ManagedPolicyName
@@ -321,9 +273,8 @@ def add_managed_policy(
     if "roles" in model:
         kw_args["Roles"] = parse_imports(c, "role", model["roles"])
 
-    if "retain_on_delete" in model:
-        if model["retain_on_delete"] is True:
-            kw_args["DeletionPolicy"] = "Retain"
+    if "retain_on_delete" in model and model["retain_on_delete"] is True:
+        kw_args["DeletionPolicy"] = "Retain"
 
     c.template[c.current_account].add_resource(ManagedPolicy(
         cfn_name,
@@ -331,34 +282,31 @@ def add_managed_policy(
     ))
 
     if c.config['global']['template_outputs'] == "enabled":
-        c.template[c.current_account].add_output([
-            Output(
-                cfn_name + "PolicyArn",
-                Description=kw_args["Description"] + " Policy Document ARN",
-                Value=Ref(cfn_name),
-                Export=Export(Sub(
-                        "${AWS::StackName}-"
-                        + cfn_name
-                        + "PolicyArn"
-                        ))
-            )
-        ])
+        c.template[c.current_account].add_output(
+            [
+                Output(
+                    f"{cfn_name}PolicyArn",
+                    Description=kw_args["Description"]
+                    + " Policy Document ARN",
+                    Value=Ref(cfn_name),
+                    Export=Export(
+                        Sub("${AWS::StackName}-" + cfn_name + "PolicyArn")
+                    ),
+                )
+            ]
+        )
 
 
 def create_instance_profile(c, RoleName, model, named=False):
-    cfn_name = scrub_name(RoleName + "InstanceProfile")
+    cfn_name = scrub_name(f"{RoleName}InstanceProfile")
 
-    kw_args = {
-        "Path": "/",
-        "Roles": [Ref(scrub_name(RoleName + "Role"))]
-    }
+    kw_args = {"Path": "/", "Roles": [Ref(scrub_name(f"{RoleName}Role"))]}
 
     if named:
         kw_args["InstanceProfileName"] = RoleName
 
-    if "retain_on_delete" in model:
-        if model["retain_on_delete"] is True:
-            kw_args["DeletionPolicy"] = "Retain"
+    if "retain_on_delete" in model and model["retain_on_delete"] is True:
+        kw_args["DeletionPolicy"] = "Retain"
 
     c.template[c.current_account].add_resource(InstanceProfile(
         cfn_name,
@@ -366,18 +314,22 @@ def create_instance_profile(c, RoleName, model, named=False):
     ))
 
     if c.config['global']['template_outputs'] == "enabled":
-        c.template[c.current_account].add_output([
-            Output(
-                cfn_name + "Arn",
-                Description="Instance profile for Role " + RoleName + " ARN",
-                Value=Ref(cfn_name),
-                Export=Export(Sub("${AWS::StackName}-" + cfn_name + "Arn"))
-            )
-        ])
+        c.template[c.current_account].add_output(
+            [
+                Output(
+                    f"{cfn_name}Arn",
+                    Description=f"Instance profile for Role {RoleName} ARN",
+                    Value=Ref(cfn_name),
+                    Export=Export(
+                        Sub("${AWS::StackName}-" + cfn_name + "Arn")
+                    ),
+                )
+            ]
+        )
 
 
 def add_role(c, RoleName, model, named=False):
-    cfn_name = scrub_name(RoleName + "Role")
+    cfn_name = scrub_name(f"{RoleName}Role")
     kw_args = {
         "Path": "/",
         "AssumeRolePolicyDocument": build_role_trust(c, model['trusts']),
@@ -395,27 +347,30 @@ def add_role(c, RoleName, model, named=False):
     if "max_role_duration" in model:
         kw_args['MaxSessionDuration'] = int(model["max_role_duration"])
 
-    if "retain_on_delete" in model:
-        if model["retain_on_delete"] is True:
-            kw_args["DeletionPolicy"] = "Retain"
+    if "retain_on_delete" in model and model["retain_on_delete"] is True:
+        kw_args["DeletionPolicy"] = "Retain"
 
     c.template[c.current_account].add_resource(Role(
         cfn_name,
         **kw_args
     ))
     if c.config['global']['template_outputs'] == "enabled":
-        c.template[c.current_account].add_output([
-            Output(
-                cfn_name + "Arn",
-                Description="Role " + RoleName + " ARN",
-                Value=GetAtt(cfn_name, "Arn"),
-                Export=Export(Sub("${AWS::StackName}-" + cfn_name + "Arn"))
-            )
-        ])
+        c.template[c.current_account].add_output(
+            [
+                Output(
+                    f"{cfn_name}Arn",
+                    Description=f"Role {RoleName} ARN",
+                    Value=GetAtt(cfn_name, "Arn"),
+                    Export=Export(
+                        Sub("${AWS::StackName}-" + cfn_name + "Arn")
+                    ),
+                )
+            ]
+        )
 
 
 def add_group(c, GroupName, model, named=False):
-    cfn_name = scrub_name(GroupName + "Group")
+    cfn_name = scrub_name(f"{GroupName}Group")
     kw_args = {
         "Path": "/",
         "ManagedPolicyArns": [],
@@ -431,27 +386,30 @@ def add_group(c, GroupName, model, named=False):
             model["managed_policies"], GroupName
         )
 
-    if "retain_on_delete" in model:
-        if model["retain_on_delete"] is True:
-            kw_args["DeletionPolicy"] = "Retain"
+    if "retain_on_delete" in model and model["retain_on_delete"] is True:
+        kw_args["DeletionPolicy"] = "Retain"
 
     c.template[c.current_account].add_resource(Group(
         scrub_name(cfn_name),
         **kw_args
     ))
     if c.config['global']['template_outputs'] == "enabled":
-        c.template[c.current_account].add_output([
-            Output(
-                cfn_name + "Arn",
-                Description="Group " + GroupName + " ARN",
-                Value=GetAtt(cfn_name, "Arn"),
-                Export=Export(Sub("${AWS::StackName}-" + cfn_name + "Arn"))
-            )
-        ])
+        c.template[c.current_account].add_output(
+            [
+                Output(
+                    f"{cfn_name}Arn",
+                    Description=f"Group {GroupName} ARN",
+                    Value=GetAtt(cfn_name, "Arn"),
+                    Export=Export(
+                        Sub("${AWS::StackName}-" + cfn_name + "Arn")
+                    ),
+                )
+            ]
+        )
 
 
 def add_user(c, UserName, model, named=False):
-    cfn_name = scrub_name(UserName + "User")
+    cfn_name = scrub_name(f"{UserName}User")
     kw_args = {
         "Path": "/",
         "Groups": [],
@@ -478,23 +436,26 @@ def add_user(c, UserName, model, named=False):
             PasswordResetRequired=True
         )
 
-    if "retain_on_delete" in model:
-        if model["retain_on_delete"] is True:
-            kw_args["DeletionPolicy"] = "Retain"
+    if "retain_on_delete" in model and model["retain_on_delete"] is True:
+        kw_args["DeletionPolicy"] = "Retain"
 
     c.template[c.current_account].add_resource(User(
         cfn_name,
         **kw_args
     ))
     if c.config['global']['template_outputs'] == "enabled":
-        c.template[c.current_account].add_output([
-            Output(
-                cfn_name + "Arn",
-                Description="User " + UserName + " ARN",
-                Value=GetAtt(cfn_name, "Arn"),
-                Export=Export(Sub("${AWS::StackName}-" + cfn_name + "Arn"))
-            )
-        ])
+        c.template[c.current_account].add_output(
+            [
+                Output(
+                    f"{cfn_name}Arn",
+                    Description=f"User {UserName} ARN",
+                    Value=GetAtt(cfn_name, "Arn"),
+                    Export=Export(
+                        Sub("${AWS::StackName}-" + cfn_name + "Arn")
+                    ),
+                )
+            ]
+        )
 
 
 def main():
@@ -504,9 +465,9 @@ def main():
         c = config(args.config)
     except Exception as e:
         raise ValueError(
-            "Failed to parse the YAML Configuration file. "
-            "Check your syntax and spacing!\n\n{}".format(e)
+            f"Failed to parse the YAML Configuration file. Check your syntax and spacing!\n\n{e}"
         )
+
 
     # We introduced a 'global' section to control naming now that we have more
     # control over naming via CloudFormation.  To be backward compatible with
@@ -623,16 +584,14 @@ def main():
                 )
 
     for account in c.search_accounts(["all"]):
-        fh = open(
+        with open(
             args.output_path
             + "/" + account
             + "(" + c.account_map_ids[account]
             + ")-IAM.template", 'w'
-        )
-
-        data = c.template[account].to_json() if args.format == 'json' else c.template[account].to_yaml()
-        fh.write(data)
-        fh.close()
+        ) as fh:
+            data = c.template[account].to_json() if args.format == 'json' else c.template[account].to_yaml()
+            fh.write(data)
 
 
 if __name__ == '__main__':

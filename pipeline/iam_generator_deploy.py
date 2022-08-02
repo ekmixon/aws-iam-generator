@@ -30,13 +30,11 @@ def build_clients(account_id, name, rolename, region="ca-central-1"):
     sts_client = session.client('sts')
 
     response = sts_client.assume_role(
-        RoleArn="arn:aws:iam::{}:role/{}".format(
-            account_id,
-            rolename
-        ),
+        RoleArn=f"arn:aws:iam::{account_id}:role/{rolename}",
         RoleSessionName=rolename,
         DurationSeconds=900,
     )
+
 
     credentials = response['Credentials']
 
@@ -153,14 +151,13 @@ def wait_for_stacks(waiters):
 
 def determine_region(context):
 
-    m = re.match("arn:aws:lambda:(.*?):\d+.*$", context.invoked_function_arn)
-    if m:
-        return(m.group(1))
+    if m := re.match(
+        "arn:aws:lambda:(.*?):\d+.*$", context.invoked_function_arn
+    ):
+        return m[1]
     else:
         raise RuntimeError(
-            "Could not determine region from arn {}".format(
-                context.invoked_function_arn
-            )
+            f"Could not determine region from arn {context.invoked_function_arn}"
         )
 
 

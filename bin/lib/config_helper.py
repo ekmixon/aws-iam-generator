@@ -42,8 +42,7 @@ def parse_cmdline():
         help='Path to jinja2 policy templates',
         default='./policy'
     )
-    args = parser.parse_args()
-    return(args)
+    return parser.parse_args()
 
 
 class config(object):
@@ -55,7 +54,7 @@ class config(object):
           self.config = yaml.load(stream, Loader=yaml.FullLoader)
         # We will use our current timestamp in UTC as our build version
         self.build_version = \
-            datetime.datetime.utcnow().strftime("%Y-%m-%dZ%H:%M:%S")
+                datetime.datetime.utcnow().strftime("%Y-%m-%dZ%H:%M:%S")
         # To hold our Troposphere template objects
         self.template = {}
         # A list of our accounts by names and IDs.
@@ -92,12 +91,14 @@ class config(object):
                     Export=Export(Sub("${AWS::StackName}-" + "TemplateBuild"))
                 )
             ])
-            if "parent" in self.config['accounts'][account]:
-                if self.config['accounts'][account]['parent'] is True:
-                    self.parent_account = account
-                    self.parent_account_id = account_id
-                    if "saml_provider" in self.config['accounts'][account]:
-                        self.saml_provider = \
+            if (
+                "parent" in self.config['accounts'][account]
+                and self.config['accounts'][account]['parent'] is True
+            ):
+                self.parent_account = account
+                self.parent_account_id = account_id
+                if "saml_provider" in self.config['accounts'][account]:
+                    self.saml_provider = \
                             self.config['accounts'][account]["saml_provider"]
         if self.parent_account == "":
             raise Exception(
@@ -146,7 +147,7 @@ class config(object):
             else:
                 # Iterate over all of our accounts by name and by ID .
                 for account_id, account_name in \
-                            zip(self.account_ids, self.account_names):
+                                zip(self.account_ids, self.account_names):
                     if re.match(pattern, account_id):
                         matched.append(
                             self.map_account(account_id)
@@ -158,9 +159,9 @@ class config(object):
 
             if found is False:
                 raise ValueError(
-                    "Unable to find account named '{}' in the accounts: "
-                    " section of the config.yaml".format(pattern)
+                    f"Unable to find account named '{pattern}' in the accounts:  section of the config.yaml"
                 )
+
 
         # uniqify our matches
         matched = list(set(matched))
@@ -172,35 +173,20 @@ class config(object):
     def is_local_user(self, user_query):
         if 'users' not in self.config:
             return(False)
-        for user in self.config['users']:
-            if user == user_query:
-                return(True)
-
-        return(False)
+        return any(user == user_query for user in self.config['users'])
 
     def is_local_role(self, role_query):
         if 'roles' not in self.config:
             return(False)
-        for role in self.config['roles']:
-            if role == role_query:
-                return(True)
-
-        return(False)
+        return any(role == role_query for role in self.config['roles'])
 
     def is_local_group(self, group_query):
         if 'groups' not in self.config:
             return(False)
-        for group in self.config['groups']:
-            if group == group_query:
-                return(True)
-
-        return(False)
+        return any(group == group_query for group in self.config['groups'])
 
     def is_local_managed_policy(self, managed_policy):
-        if managed_policy in self.config["policies"]:
-            return True
-        else:
-            return False
+        return managed_policy in self.config["policies"]
 
     def is_managed_policy_in_account(self, managed_policy, account):
         if managed_policy in self.config["policies"]:
@@ -209,11 +195,6 @@ class config(object):
                     self.config["policies"][managed_policy]["in_accounts"]
                 )
                 entity_account_context = self.search_accounts([account])
-                if entity_account_context[0] in policy_account_context:
-                    return True
-                else:
-                    return False
-            # If there is no in_accounts section in our managed policy
-            # it goes in all accounts.
+                return entity_account_context[0] in policy_account_context
             else:
                 return True
